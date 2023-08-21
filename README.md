@@ -1,2 +1,2 @@
 # Thesis_Code
- Code used for my masters' thesis
+ Code used for my masters' thesis, using R.
