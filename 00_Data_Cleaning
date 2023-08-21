@@ -1,0 +1,284 @@
+# 0. LOADING DATA AND PACKAGES --------------------------------------------
+
+library(psych)
+library(tidyverse)
+library(mirt)
+library(fastGHQuad)
+library(msm)
+library(ggplot2)
+library(forcats)
+
+#dataset with grades
+data <- read.csv("N:/durable/students/p1708-sverrbo/data/registers/W21_4952_TAB_KAR_VG.csv")
+
+
+
+# 1. PREPARING GRADE DATASET -------------------------------------------------
+
+
+
+data19 <- data[data$SKOLEAR == 20182019,] # only selecting year 2019
+data19 <- data19[!duplicated(data19),] #removing duplicate rows
+data19 <- data19[!data19$FAGSTATUS == "V",] # removing adults
+
+
+# Some times, end of the term grades were listed as 2nd term grades. Hence, 2nd term grades are moved to STP 
+data19$STP[data19$STP == ""] <- data19$TERMIN2[data19$STP ==""] 
+
+
+#Removing unnecessary columns     
+gradedf <- data19[c("w21_4952_lopenr_person","STP","FAGKODE")] 
+
+#reshaping
+gradedf <-  reshape(gradedf, dir = "wide", sep="",
+                    idvar = "w21_4952_lopenr_person",  timevar = "FAGKODE")
+names(gradedf) <- gsub(pattern = "STP", replacement = "", x = names(gradedf))
+
+#Creating a dataset needed for descriptives
+full_gradedf <- gradedf
+#save(full_gradedf, file = "full_gradedf)
+
+##### 1.1 exclusion of sample not included in the analysis ####
+
+#include only those taking mandatory  classes
+gradedf <- gradedf[!is.na(gradedf$KRO1006),]
+gradedf <- gradedf[!is.na(gradedf$HIS1002),]
+gradedf <- gradedf[!is.na(gradedf$NOR1211),]
+gradedf <- gradedf[!is.na(gradedf$NOR1212),]
+gradedf <- gradedf[!is.na(gradedf$NOR1213),]
+gradedf <- gradedf[!is.na(gradedf$REL1001),]
+
+#Removing students that are in the Media and Communication and Art, Design, Architecture programs
+gradedf <- gradedf[-which(!is.na(gradedf$MOK2003) & !is.na(gradedf$MOK2007)),]
+gradedf <- gradedf[-which(!is.na(gradedf$KDA2003) & !is.na(gradedf$KDA2006)),]
+
+#Creating a dataset needed for descriptives, with all students in the general studies program
+gstudies_data <- gradedf 
+#save(gstudies_data, file = "gstudies_data)
+
+#Removing those who have started prior to 2016
+old_school <- unique(data$w21_4952_lopenr_person[!data$SKOLEAR %in% c(20162017,20172018, 20182019,20192020)] )
+gradedf <- gradedf[!gradedf$w21_4952_lopenr_person %in% old_school,]
+
+
+###### 1.11. Identifying those with three or more electives ####
+# List 131 non-language subjects available to third year students, taken from https://www.vilbli.no/en/en/no/distribution-of-periods-and-subjects-specialization-in-general-studies/program/v.st/v.stusp1----_v.stssa2----_v.stssa3----_/p2?kurs=v.stusp1----_v.stssa2----_v.stssa3----_
+electives <- read.csv("all_courses.csv")
+#Removing mandatory subjects
+electives <- subset(electives, !FAGKODE %in% c("NOR1211", "NOR1212", "NOR1213","KRO1006","HIS1002","REL1001"))
+
+
+#Since there are hundreds of language electives they were identified differently:
+
+#A dataframe with all subject codes and names scraped from https://www.udir.no/innstillinger/fagkoder-til-sok/
+language_electives <- read.csv("course_description_all_courses.csv", sep = ";")
+names(language_electives)[1] <- "description"
+language_electives <- language_electives %>% relocate(FAGKODE, .before = description)
+
+
+#removing subjects no one in the sample took
+gradedf <- gradedf[, !colSums(is.na(gradedf)) == nrow(gradedf)]  
+
+#each subject group has a subject code consisting of a three-letter combination
+#we identify which subjects are language subjects
+unique(substr(names(gradedf),1,3))
+
+#Extracting column names of language electives and making list of language electives in gradedf
+language_codes <- colnames(gradedf)[grep("^(FSP|ENG|SPR|PSP)", colnames(gradedf))]
+language_electives <- language_electives[language_electives$FAGKODE %in% language_codes,]
+
+#List of subjects available to students.
+electives <- rbind(electives, language_electives)
+
+#the electives df includes oral grades for language subjects.
+#To see how many subjects students have taken, oral grades are removed.
+oral_grades <- electives[grep(electives$description, pattern= "muntlig"),] #oral grades have the word "muntlig" in its name
+
+#list of electives, excluding oral grades
+electives <- electives[!electives$FAGKODE %in% oral_grades$FAGKODE,]
+
+#calculating how many electives each student took
+
+#the electives list is now the list of electives that are in gradedf
+electives <- intersect(electives$FAGKODE, colnames(gradedf))
+
+#dataset used for counting how many electives a student has taken
+n_electives <- gradedf
+n_electives <- n_electives[, colnames(n_electives) %in% c(electives, "w21_4952_lopenr_person")]
+n_electives$n_electives <- rowSums(!is.na(n_electives[2:ncol(n_electives)]))
+
+#We only want to include those that took 3 electives or more electives
+included_sample <- n_electives$w21_4952_lopenr_person[n_electives$n_electives >= 3]
+
+#Removing those taking fewer than three electives
+gradedf <- gradedf[gradedf$w21_4952_lopenr_person %in% included_sample,]
+
+#Checking if all remaining students are in the General Studies program
+v_data <- read.csv("N:/durable/students/p1708-sverrbo/data/registers/W21_4952_VITNEMAL_VG.csv")
+v_data <- v_data[v_data$w21_4952_lopenr_person %in% gradedf$w21_4952_lopenr_person,]
+v_data$w21_4952_lopenr_person[v_data$STUDRETN_3 != 62] # there are no students not in general studies
+
+#ID of the sample, used for subsequent indexing.
+ID <- gradedf$w21_4952_lopenr_person
+
+#### 1.2 inclusion of subjects ####
+subject_n <- gradedf[, -c(which(names(gradedf)=="w21_4952_lopenr_person"),
+                          which(names(gradedf)=="KRO1006"),
+                          which(names(gradedf)=="NOR1212"),
+                          which(names(gradedf)=="REL1001"),
+                          which(names(gradedf)=="NOR1211"),
+                          which(names(gradedf)=="NOR1213"),
+                          which(names(gradedf)=="HIS1002"))]
+
+
+#summing n students in each subject
+subject_n[!is.na(subject_n)] <- 1
+subject_n[is.na(subject_n)] <- 0
+for(i in 1:ncol(subject_n))subject_n[,i] <- as.numeric(subject_n[,i])
+subject_n <- as.data.frame(colSums(subject_n))
+names(subject_n) <- "n"
+subject_n <- subject_n[order(rev(subject_n$n)),]
+
+
+#limiting to 40 subjects and removing oral english
+subject_n <- subject_n[c(1:40)]
+subject_n <- subject_n[-9]
+
+#plotting
+plot(subject_n$n, type = "l", ylab = "students enrolled in subject", xlab = "subjects")+
+  abline(v = 11, col = "red")
+
+#Creating a list of subjects to be included in the study
+included_subjects <- c("NOR1212",	"REL1001",	"NOR1211",	"NOR1213",	"HIS1002",	"SAM3038",	"REA3024",	"REA3028",	"REA3012",	"SAM3023",	"SAM3020",	"SAM3016",	"SPR3010","SPR3011",	"REA3002",	"REA3005",	"SAM3006")
+
+#excluded subjects are removed
+gradedf <- gradedf[,names(gradedf) %in% c(included_subjects, "w21_4952_lopenr_person")]
+
+
+
+
+
+# 2. PREPARING CHOICE VARIABLE, d_ni --------------------------------------
+testdf <- gradedf
+gradedf <- testdf
+xtable_student.temp <- gradedf
+
+#Did student i enroll in subject n? cell gets a 1 if it is not NA, and a 0 if it is NA
+for(i in 2:ncol(xtable_student.temp))xtable_student.temp[i][!is.na(xtable_student.temp[i])] <- 1
+for(i in 2:ncol(xtable_student.temp))xtable_student.temp[i][is.na(xtable_student.temp[i])] <- 0
+
+
+#did the school offer the subject? extracting school-level data
+xtable_school.temp <-data19[,c("w21_4952_lopenr_orgnr","FAGKODE","STP")]
+xtable_school.temp <- xtable_school.temp[!xtable_school.temp$w21_4952_lopenr_orgnr =="",] #removing NA School IDs
+xtable_school.temp <- xtable_school.temp[xtable_school.temp$FAGKODE %in% included_subjects,] #included subjects only
+
+#reshaping
+xtable_school.temp <- reshape(xtable_school.temp, dir = "wide", sep="", idvar = "w21_4952_lopenr_orgnr",  timevar = "FAGKODE")
+names(xtable_school.temp) <- gsub(pattern = "STP", replacement = "", x = names(xtable_school.temp))
+
+#100 if the school offered subjects, 10 if it does not
+for(i in 2:ncol(xtable_school.temp))xtable_school.temp[i][!is.na(xtable_school.temp[i])] <- 100
+for(i in 2:ncol(xtable_school.temp))xtable_school.temp[i][is.na(xtable_school.temp[i])] <- 10
+
+
+#student_school links the students in the sample with their school
+student_school <- data19[data19$w21_4952_lopenr_person %in% ID,]
+student_school <- student_school[,c("w21_4952_lopenr_orgnr","w21_4952_lopenr_person")]
+student_school <- student_school[!duplicated(student_school$w21_4952_lopenr_person),] # removing duplicates
+length(unique(student_school$w21_4952_lopenr_orgnr))# 308 schools are included in the study
+sum(student_school$w21_4952_lopenr_orgnr == "") #20 students have NA in their school code.
+
+#Students with NA school codes receive the school code from a previous year
+student_school$w21_4952_lopenr_orgnr[student_school$w21_4952_lopenr_orgnr == ""] <- NA #recoding "" to NA
+
+missing_school <- student_school[is.na(student_school$w21_4952_lopenr_orgnr),] #indexing those missing school ID
+missing_school <- data[data$w21_4952_lopenr_person %in% missing_school$w21_4952_lopenr_person,] #extracting all data on these students
+missing_school <- missing_school[c("w21_4952_lopenr_person", "w21_4952_lopenr_orgnr")] # removing unnecessary columns
+missing_school <- missing_school[!missing_school$w21_4952_lopenr_orgnr == "",] # removing NA school IDs
+missing_school <- missing_school[!duplicated(missing_school$w21_4952_lopenr_person),] # removing duplicates
+
+#connecting the dfs containing those that had missing school IDs and the other students
+student_school <- left_join(student_school,missing_school, by = "w21_4952_lopenr_person")
+student_school$w21_4952_lopenr_orgnr.x[is.na(student_school$w21_4952_lopenr_orgnr.x)] <- student_school$w21_4952_lopenr_orgnr.y[is.na(student_school$w21_4952_lopenr_orgnr.x)]
+student_school <- student_school[1:2]
+names(student_school)[1] <- "w21_4952_lopenr_orgnr"
+
+student_df <- xtable_student.temp
+school_df <- xtable_school.temp
+
+#connecting student IDs and school IDs for the school DF
+school_df<- left_join(student_school,school_df, by = "w21_4952_lopenr_orgnr")
+
+#connecting student IDs and school IDs for the student DF
+student_df <- left_join(student_school,student_df,by = "w21_4952_lopenr_person")
+
+for(i in 3:ncol(student_df))student_df[,i] <- as.numeric(student_df[,i])
+for(i in 3:ncol(school_df))school_df[,i] <- as.numeric(school_df[,i])
+school_df <- school_df[names(student_df)]# reordering so columns match
+
+choicedf <- cbind(student_df$w21_4952_lopenr_person, student_df[,3:ncol(student_df)] + school_df[,3:ncol(school_df)])
+names(choicedf)[1] <- "w21_4952_lopenr_person"
+
+# 100 = course offered, not taken
+# 101 = course offered, and taken
+# 10 = course not offered, course not taken
+for(i in 2:ncol(choicedf))choicedf[i][choicedf[i] == 101] <- 1
+for(i in 2:ncol(choicedf))choicedf[i][choicedf[i] == 100] <- 0
+for(i in 2:ncol(choicedf))choicedf[i][choicedf[i] == 10] <- NA
+
+
+# 3. PREPARING FINAL DF ---------------------------------------------------
+
+
+#reordering names in choicedf to match gradedf
+choicedf <- choicedf[names(gradedf)]
+
+#changing names of both dataframes
+
+names(gradedf) <- c("w21_4952_lopenr_person",
+                    "psychology",   # SAM3038
+                    "norwegian_s",  # NOR1212
+                    "religion",     # REL1001
+                    "norwegian_w",  # NOR1211
+                    "norwegian_o",  # NOR1213
+                    "history",      # HIS1002
+                    "jurisprudence",# SAM3023
+                    "politics",     # SAM3020
+                    "english_w",    # SPR3010
+                    "english_o",    # SPR3011
+                    "biology",      # REA3002
+                    "math_s",       # REA3028
+                    "chemistry",    # REA3012
+                    "physics",      # REA3005
+                    "sociology",    # SAM3016
+                    "math_n",       # REA3024
+                    "marketing"     # SAM3006
+)    
+
+
+names(choicedf) <- names(gradedf)
+
+
+#### 3.1 Recoding ####
+
+#Frequency of different letter grades
+table(unlist(gradedf[2:ncol(gradedf)]))
+
+#All letter grades are recoded to NA, except "No basis for assisment (IV)", which is recoded to 1
+gradedf[gradedf == "IV"] <- 1
+for(i in 2:ncol(gradedf))gradedf[,i] <- as.numeric(gradedf[,i]) # changing to numeric and rest of letter grades to NA
+
+#### 3.2 last cleaning ####
+
+#removing mandatory subjects and oral english
+choicedf <- select(choicedf, !c(history,religion,norwegian_w,norwegian_o,norwegian_s,english_o))
+names(choicedf)[2:ncol(choicedf)] <- paste0("C", names(choicedf)[2:ncol(choicedf)])
+
+#Merging choice and grade datasets, and removing identifier
+final_df <- left_join(choicedf,gradedf, by = "w21_4952_lopenr_person")
+final_df <- select(final_df, !w21_4952_lopenr_person)
+
+#removing ID from choice and grade data sets
+gradedf <- select(gradedf, !w21_4952_lopenr_person)
+choicedf <- select(choicedf, !w21_4952_lopenr_person)

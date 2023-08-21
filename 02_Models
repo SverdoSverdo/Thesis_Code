@@ -1,0 +1,97 @@
+# 5. Models ---------------------------------------------------------------
+
+#### 5.1 Competency dimension ####
+
+#uni-dimensional GPCM (Model 0)
+uni_gpcm_model <- mirt(gradedf, model = 1, itemtype = "gpcm", SE = T,quadpts = 20)
+
+#uni-dimensional GRM (Model 1)
+uni_graded_model <- mirt(gradedf, model = 1, itemtype = "graded", SE = T, quadpts = 20)
+
+#two-dimensional model (Model 2)
+two_dim_spec <- '
+humanities = history,religion, psychology,jurisprudence,politics,marketing,sociology,norwegian_w,norwegian_o,norwegian_s,english_w,english_o
+STEM = biology,math_n,math_s,chemistry,physics
+COV = humanities*STEM
+'
+
+two_dim_model <- mirt(data = final_df[12:28], model = two_dim_spec,itemtype = "graded",
+                      method = "EM",  parallel = T,
+                      quadpts = 20,
+                      SE = T,
+                      technical = list(NCYCLES = 2000))
+
+#three-dimensional model (Model 3)
+three_dim_spec <- '
+SS = history,religion, psychology,jurisprudence,politics,marketing,sociology
+languages = norwegian_w,norwegian_o,norwegian_s,english_w,english_o
+STEM = biology,math_n,math_s,chemistry,physics
+COV = SS*languages*STEM
+'
+
+three_dim_model <- mirt(data = final_df[12:28], model = three_dim_spec, itemtype = "graded",
+                        method = "EM",
+                        quadpts = 20,
+                        SE = T,
+                        technical = list(NCYCLES = 10000,MAXQUAD =40000))
+
+#Model comparison table
+
+prof_model_comp <- anova(uni_graded_model,two_dim_model,three_dim_model)
+round(prof_model_comp, 0)
+prof_model_comp$BIC_dif <- NA
+for(i in 2:nrow(prof_model_comp))prof_model_comp[i,9] <- prof_model_comp[i,4] -prof_model_comp[i-1,4]
+#write.table(prof_model_comp, "prof_model_comp", quote = F, sep = "\t")
+
+
+#### 5.2 Selection Model Model ####
+
+#### selection model ####
+
+#Constrained t-parameters and discrimination parameters
+choice_spec_constrained <- '
+choice = Cpsychology,Cjurisprudence,Cpolitics,Cmarketing,Csociology,Cenglish_w,Cbiology,Cmath_n,Cmath_s,Cchemistry,Cphysics
+CONSTRAIN =  (1-11, t1), (1-11, a1)
+'
+
+choice_model_constrained <- mirt(data = choicedf, model = choice_spec_constrained, itemtype = "ggum",
+                                 method = "EM",SE = T, quadpts = 20)
+
+choice_sv <- mod2values(choice_model_constrained)
+
+#freely estimated t parameters, but constrained discrimination
+choice_spec_free <- '
+choice = Cpsychology,Cjurisprudence,Cpolitics,Cmarketing,Csociology,Cenglish_w,Cbiology,Cmath_n,Cmath_s,Cchemistry,Cphysics
+CONSTRAIN =  (1-11, a1)
+'
+
+choice_model_free <- mirt(data = choicedf, model = choice_spec_free, itemtype = "ggum",
+                          method = "EM",SE = T, 
+                          pars = choice_sv,
+                          quadpts = 20)
+
+M2(choice_model_free_t, na.rm = T)
+
+
+#### 5.3 Joint model (Model 4) ####
+
+three_dim_joint_spec <- '
+choice = Cpsychology,Cjurisprudence,Cpolitics,Cmarketing,Csociology,Cenglish_w,Cbiology,Cmath_n,Cmath_s,Cchemistry,Cphysics
+humanities = history,religion,psychology,jurisprudence,politics,marketing,sociology,norwegian_w,norwegian_o,norwegian_s,english_w,english_o
+STEM = biology,math_n,math_s,chemistry,physics
+COV = choice*humanities*STEM
+CONSTRAIN =  (1-11, a1)
+'
+final_three_dim_model <- mirt(data = final_df, model = three_dim_joint_spec,
+                              itemtype = c(rep("ggum",11),rep("graded",17)),
+                              method = "EM",
+                              SE = T,
+                              pars = sv_pars,
+                              quadpts = 20,
+                              technical = list(NCYCLES = 10000,MAXQUAD =40000))
+
+#logLik comparison between Model 2 and 4
+Model_4_logLik <- extract.mirt(final_three_dim_model, what = "logLik")
+Model_2_logLik <- extract.mirt(two_dim_model, what = "logLik")
+selection_model_logLik <- extract.mirt(choice_model_free_t, what = "logLik")
+Model_4_logLik - (Model_2_logLik+selection_model_logLik)

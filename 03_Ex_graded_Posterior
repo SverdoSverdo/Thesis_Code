@@ -1,0 +1,320 @@
+# 6. Expected Grades ------------------------------------------------------
+
+
+##### Compute probabilities from mirtobject
+mirtprobs <- function(mirtmod, nquad, ndim, Mu, Sigma){
+  GHgrid <- gaussHermiteData(nquad)
+  GHxXD <- as.matrix(expand.grid(rep(list(GHgrid$x), ndim)))
+  GHwXD <- as.matrix(expand.grid(rep(list(GHgrid$w), ndim)))
+  
+  #Adjust grid
+  GHxXDN <- t(t(chol(Sigma)) %*% t(GHxXD) + Mu)
+  
+  J <- length(extract.mirt(mirtmod, "itemtype"))
+  itemprobs <- vector("list", J)
+  #Compute probabilities for all categories for all latent variable values, from mirt object
+  for(i in 1:J) itemprobs[[i]] <- probtrace(extract.item(mirtmod, i), GHxXDN)
+  return(list(itemprobs = itemprobs, GHxXDN = GHxXDN, GHwXD = GHwXD, GHxXD = GHxXD))
+}
+
+#### 6.2 Compute expected grades for missing values ####
+
+#mirtobj - mirt object
+#obsdata - dataframe with grades
+#nquad - number of quadrature points per dimension
+#ndim - number of latent variables
+#Mu - mean vector of latent variables
+#Sigma - covariance matrix of latent variables
+#Jelect - number of electives
+#Jcat - vector with number of response categories for choice and grades
+
+computeExpected <- function(mirtobj, obsdata, nquad, ndim, Mu, Sigma, Jelect, Jcat){
+  ##### Compute conditional probabilities at quadrature points
+  myprobs <- mirtprobs(mirtobj, nquad = nquad, ndim = ndim, Mu = Mu, Sigma = Sigma)
+  
+  ##### We have N number of respondents
+  ##### Jall is the number of elective grades plus the number of total grades
+  N <- nrow(obsdata)
+  Jall <- ncol(obsdata)
+  Jcat <- c(rep(2, Jelect), Jcat)
+  
+  ##### Create a matrix to fill with observed or expected grades
+  newgrade <- matrix(NA, N, Jall)
+  ##### Loop through each respondent
+  for(k in 1:N){ 
+    ##### Compute normalizing constant for the posterior distribution
+    ##### Conditional probabilities for selection (binary) and for grade (ordinal), given a combination of latent variables
+    conditionalprob <- rep(1.0, nrow(myprobs$GHxXDN))
+    for(i in 1:Jall){
+      if(is.na(obsdata[k,i])) next
+      conditionalprob <- conditionalprob * myprobs$itemprobs[[i]][,obsdata[k,i] + 1]
+    }
+    
+    marginalprob <- numeric(1)
+    ##### Weight each quadrature point and accumulate
+    ##### Adjust weights to standard normal distribution instead of exp(-x^2)
+    for(i in 1:nrow(myprobs$GHxXDN)) marginalprob <- conditionalprob[i] * prod(myprobs$GHwXD[i,] / sqrt(2.0 * pi) * exp(myprobs$GHxXD[i,]^2 / 2.0)) + marginalprob
+    
+    ##### Loop through each course
+    for(l in 1:Jall){		
+      if(!is.na(obsdata[k,l])){
+        newgrade[k, l] <- obsdata[k, l]
+        next
+      }
+      
+      ##### Compute expected value for missing grade
+      conditionalexp <- matrix(0, nrow(myprobs$GHxXDN), ncol = Jcat[l])
+      for(j in 1:Jcat[l]) conditionalexp[, j] <- as.numeric((j - 1)) * myprobs$itemprobs[[l]][,j] * conditionalprob / marginalprob
+      
+      myexpgrade <- numeric(1)
+      for(j in 1:Jcat[l]) for(i in 1:nrow(myprobs$GHxXDN)) myexpgrade <- conditionalexp[i,j] * prod(myprobs$GHwXD[i,] / sqrt(2.0 * pi) * exp(myprobs$GHxXD[i,]^2 / 2.0)) + myexpgrade
+      
+      newgrade[k, l] <- myexpgrade
+    }
+  }
+  ##### Output is a matrix of same size as the data matrix, but with expected values instead of missing values
+  return(newgrade)
+}
+
+##### 6.21 Defining input needed for the function ####
+
+joint_free_mean_vecc <- c(0,0,0)
+joint_free_theta_cov <- data.frame(c(1,.369,.604),
+                                   c(.369,1,.82),
+                                   c(.604,.82,1))
+
+two_dim_mean_vecc <- c(0,0)
+two_dim_theta_cov <- data.frame(c(1, .817),
+                                c(.817,1))
+
+car_vec <- rep(c(1:6),18)
+
+#changing grades to 0-5, a requirement for the function
+final_df[12:28][] <- final_df[12:28][]-1
+
+
+#compute expected grades for missing cells for Model 4
+ex_joint_free <- computeExpected(final_three_dim_model,
+                                 obsdata = final_df, 
+                                 nquad = 15,
+                                 ndim = 3,
+                                 Mu = joint_free_mean_vecc,
+                                 Sigma = joint_free_theta_cov,
+                                 Jelect = 11,
+                                 Jcat = car_vec)
+
+#changing grades back to 1-6 and matching names with the grade df.
+ex_joint_free[12:28] <- ex_joint_free[12:28][]+1
+ex_joint_free <- as.data.frame(ex_joint_free)
+names(ex_joint_free) <- names(final_df)
+
+#compute expected grades for missing cells for Model 2
+ex_two_dim <- computeExpected(two_dim_model,
+                              obsdata = final_df[12:28], 
+                              nquad = 15,
+                              ndim = 2,
+                              Mu = two_dim_mean_vecc,
+                              Sigma = two_dim_theta_cov,
+                              Jelect = 0,
+                              Jcat = car_vec)
+
+#changing grades back to 1-6 and matching names with the grade df.
+ex_two_dim <- ex_two_dim[]+1
+ex_two_dim <- as.data.frame(ex_two_dim)
+names(ex_two_dim) <- names(ex_two_dim)
+
+
+
+#### 6.3 Compute expected grades for all cells  ####
+
+#The function takes the same inputs as computeExpected
+
+computeExpectedAll <- function(mirtobj, obsdata, nquad, ndim, Mu, Sigma, Jelect, Jcat){
+  ##### Compute conditional probabilities at quadrature points
+  myprobs <- mirtprobs(mirtobj, nquad = nquad, ndim = ndim, Mu = Mu, Sigma = Sigma)
+  
+  ##### We have N number of respondents
+  ##### Jall is the number of elective grades plus the number of total grades
+  N <- nrow(obsdata)
+  Jall <- ncol(obsdata)
+  Jcat <- c(rep(2, Jelect), Jcat)
+  
+  ##### Create a matrix to fill with observed or expected grades
+  newgrade <- matrix(NA, N, Jall)
+  ##### Loop through each respondent
+  for(k in 1:N){ 
+    ##### Compute normalizing constant for the posterior distribution
+    ##### Conditional probabilities for selection (binary) and for grade (ordinal), given a combination of latent variables
+    conditionalprob <- rep(1.0, nrow(myprobs$GHxXDN))
+    for(i in 1:Jall){
+      if(is.na(obsdata[k,i])) next
+      conditionalprob <- conditionalprob * myprobs$itemprobs[[i]][,obsdata[k,i] + 1]
+    }
+    
+    marginalprob <- numeric(1)
+    ##### Weight each quadrature point and accumulate
+    ##### Adjust weights to standard normal distribution instead of exp(-x^2)
+    for(i in 1:nrow(myprobs$GHxXDN)) marginalprob <- conditionalprob[i] * prod(myprobs$GHwXD[i,] / sqrt(2.0 * pi) * exp(myprobs$GHxXD[i,]^2 / 2.0)) + marginalprob
+    
+    ##### Loop through each course
+    for(l in 1:Jall){		
+      ##### Compute expected value for missing grade
+      conditionalexp <- matrix(0, nrow(myprobs$GHxXDN), ncol = Jcat[l])
+      for(j in 1:Jcat[l]) conditionalexp[, j] <- as.numeric((j - 1)) * myprobs$itemprobs[[l]][,j] * conditionalprob / marginalprob
+      
+      myexpgrade <- numeric(1)
+      for(j in 1:Jcat[l]) for(i in 1:nrow(myprobs$GHxXDN)) myexpgrade <- conditionalexp[i,j] * prod(myprobs$GHwXD[i,] / sqrt(2.0 * pi) * exp(myprobs$GHxXD[i,]^2 / 2.0)) + myexpgrade
+      
+      newgrade[k, l] <- myexpgrade
+    }
+  }
+  ##### Output is a matrix of same size as the data matrix, but with expected values instead of missing values
+  return(newgrade)
+}
+
+#compute all expected grades for Model 4
+ex_joint_free_all <- computeExpectedAll(final_three_dim_model,
+                                        obsdata = final_df, 
+                                        nquad = 10,
+                                        ndim = 3,
+                                        Mu = joint_free_mean_vecc,
+                                        Sigma = joint_free_theta_cov,
+                                        Jelect = 11,
+                                        Jcat = car_vec)
+
+#changing grades back to 1-6 and matching names with the grade df
+ex_joint_free <- as.data.frame(ex_joint_free)
+ex_joint_free[12:28] <- ex_joint_free[12:28][] + 1
+names(ex_joint_free) <- names(final_df)
+
+#compute all expected grades for Model 2
+ex_two_dim_all <- computeExpectedAll(two_dim_model,
+                                     obsdata = final_df[12:28], 
+                                     nquad = 10,
+                                     ndim = 2,
+                                     Mu = two_dim_mean_vecc,
+                                     Sigma = two_dim_theta_cov,
+                                     Jelect = 0,
+                                     Jcat = car_vec)
+
+#changing grades back to 1-6 and matching names with the grade df
+ex_two_dim_all <- as.data.frame(ex_two_dim_all)
+ex_two_dim_all <- ex_two_dim_all[] + 1
+names(ex_two_dim_all) <- names(ex_two_dim_all)
+
+
+#changing grades back to 1-6
+final_df[12:28] <- final_df[12:28] +1
+
+
+
+#### 6.4 Descriptive Statistics with Expected grades from Model 4 ####
+
+###### average grades of STEM and HUM subjects for Model 4 ######  
+
+
+STEM_avg <- sum(colSums(Ex_grades_joint_free[24:28])) # last 5 columns are STEM
+STEM_avg <- STEM_avg/(nrow(Ex_grades_joint_free)*5)
+
+HUM_avg <- sum(colSums(Ex_grades_joint_free[c("sociology","psychology","jurisprudence",
+                                              "politics","marketing","english_w",
+                                              "english_o")]))
+HUM_avg <- HUM_avg/(nrow(Ex_grades_joint_free)*7)
+
+
+Ex_grades <- Ex_grades_joint_free
+Ex_grades$GPA <- rowSums(Ex_grades)
+
+obs_missing_cor <- data.frame(matrix(ncol = 11, nrow = 1))
+colnames(obs_missing_cor) <- colnames(choicedf)[1:11]
+
+for(i in 1:11)obs_missing_cor[,i] <- cor(choicedf[,i], Ex_grades$GPA, use = "pairwise.complete.obs")
+obs_missing_cor <- round(obs_missing_cor, 2)
+#write.table(obs_missing_cor, "obs_missing_cor", quote = F, row.names = F, col.names = T, sep = "\t")
+
+#checking significance level
+for(i in 1:11){k <-cor.test(choicedf[,i], Ex_grades$GPA, method = "pearson")
+print(k)
+} 
+
+
+
+# 7. Comparing Model 2 and 4 ----------------------------------------------
+load("final_df")
+load("Ex_grades_joint_free_all")
+load("Ex_grades_two_all")
+gradef <- final_df[12:28]
+
+ex_grades4 <- Ex_grades_joint_free_all[12:28]
+ex_grades2 <- Ex_grades_two_all
+
+#removing expected values that are unobserved in gradedf 
+gradef <- final_df[12:28]
+ex_grades2[is.na(gradef)] <- NA
+ex_grades4[is.na(gradef)] <- NA
+
+#function that computes the average grade on subject i for dns = 0 and dns = 1
+model_fit <- function(grades){
+  
+  fit_frame <- as.data.frame(matrix(NA, nrow = ncol(gradedf), ncol = ncol(gradedf)*2))
+  names(fit_frame)[1:17] <- paste0(names(gradedf),".1") # s_1
+  names(fit_frame)[18:34] <- paste0(names(gradedf),".0")# s_0
+  row.names(fit_frame) <- names(ex_grades2)  
+  
+  for(s in 1:17) {
+    s_1 <- which(!is.na(grades[,s])) # which students recieved a grade in subject s?
+    s_0 <- which(is.na(grades[,s])) #which student did not recieve a grade in subject s?
+    
+    #what is the mean grade in subject i of students who did  recieve  a grade in subject s?
+    for(i in 1:17){
+      fit_frame[s,i] <- sum(grades[s_1,i], na.rm = T)/(sum(!is.na(grades[s_1,i])))
+      
+      #what is the mean grade in subject i of students who did not recieve  a grade in subject s?
+    }
+    for(i in 1:17){
+      fit_frame[s,(i+17)] <- sum(grades[s_0,i], na.rm = T)/(sum(!is.na(grades[s_0,i])))
+    }
+  }
+  return(fit_frame)
+}
+
+# Observed subject means and Expected subject means for Models 2 and 4
+obs_means <- model_fit(gradedf)
+m2_means <- model_fit(ex_grades2) 
+m4_means <- model_fit(ex_grades4)
+
+#there are no students taking math_n and math_s, so these become NA
+obs_means["math_n","math_s.1"] <- NA
+obs_means["math_s","math_n.1"] <- NA
+
+m2_means["math_n","math_s.1"] <- NA
+m2_means["math_s","math_n.1"] <- NA
+
+m4_means["math_n","math_s.1"] <- NA
+m4_means["math_s","math_n.1"] <- NA
+
+m2_s1 <- rowSums(m2_means[,1:17], na.rm = T)
+m2_s0 <- rowSums(m2_means[,18:34], na.rm = T)
+m2_means <- as.data.frame(rbind(m2_s1,m2_s0))
+
+m4_s1 <- rowSums(m4_means[,1:17], na.rm = T)
+m4_s0 <- rowSums(m4_means[,18:34], na.rm = T)
+m4_means <- as.data.frame(rbind(m4_s1,m4_s0))
+
+obs_s1 <- rowSums(obs_means[,1:17], na.rm = T)
+obs_s0 <- rowSums(obs_means[,18:34], na.rm = T)
+obs_means <- as.data.frame(rbind(obs_s1,obs_s0))
+
+diff <- m4_means - m2_means
+
+model_fit_2 <- (m2_means-obs_means)^2
+model_fit_2 <- model_fit_2[1,] + model_fit_2[2,]
+
+model_fit_4 <- (m4_means-obs_means)^2
+model_fit_4 <- model_fit_4[1,] + model_fit_4[2,]
+
+model_fit_2 <- rbind(model_fit_2[1:17],model_fit_2[18:34])
+model_fit_2 <- colSums(model_fit_2)
+
+model_fit_table <- rbind(model_fit_4, model_fit_2)
+model_fit_table <- round(model_fit_table, 3)

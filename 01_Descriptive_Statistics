@@ -1,0 +1,66 @@
+# 4. Descriptive Statistics -----------------------------------------------
+
+
+#### 4.1 percentage students in general studies taking the included subjects (p.16) ####
+
+#load("gstudies_data")
+gstudies <- gstudies_data[,names(gstudies_data) %in% included_subjects]# removing subjects not part of the analysis
+gstudies <- select(gstudies, !c(NOR1212,REL1001,NOR1211,NOR1213,HIS1002)) # removing mandatory subjects
+gstudies[!is.na(gstudies)] <- 1
+gstudies[is.na(gstudies)] <- 0
+for(i in 1:ncol(gstudies))gstudies[,i] <- as.numeric(gstudies[,i])
+gstudies$nelectives <- rowSums(gstudies[1:ncol(gstudies)]) 
+table(gstudies$nelectives) # how many students in general studies took the included electives in this study?
+
+
+#### 4.2 observed correlation table ####
+cor_table <- gradedf
+cor_table <- round(cor(cor_table, use = "pairwise.complete.obs"),2)
+#  write.table(cor_table, "cor_table", quote = F, sep= "\t")
+
+
+
+#### 4.3 Descriptives table ####
+desc_table <- gradedf
+desc_table <- describe(gradedf, na.rm = T) 
+desc_table$na <- 100-desc_table$n/nrow(gradedf)*100 # percentage NA
+desc_table[18,2] <- sum(desc_table$n, na.rm = T) # total N
+desc_table[18,14] <- sum(desc_table$n, na.rm = T)/(21832*17)*100 # total NA
+desc_table[18,3] <- mean(as.matrix(gradedf), na.rm = T) # grand mean
+desc_table[18,5] <- median(as.matrix(gradedf), na.rm = T) # grand median
+desc_table[18,4] <- sd(as.matrix(gradedf), na.rm = T) # grand SD
+desc_table[18,11] <- skew(rowSums(gradedf, na.rm = T)) # total skew
+desc_table[18,12] <- kurtosi(rowSums(gradedf, na.rm = T)) # total kurtosis
+desc_table <- round(desc_table, 2)
+#write.table(desc_table, "desc_table", quote = F, row.names = T, sep = "\t", col.names = T)
+
+
+#### 4.4 observed correlation between missing and GPA ####
+
+#calculating the GPA of the sample
+gpa_df <- full_gradedf
+gpa_df <- gpa_df[gpa_df$w21_4952_lopenr_person %in% ID,] #Reordering gpa_df to choicedf
+gpa_df <- gpa_df[order(ID), ]
+gpa_df$N_SUBJECTS <- rowSums(!is.na(gpa_df[2:ncol(gpa_df)])) # how many subjects did they receive grades in?
+gpa_df[gpa_df == "IV"] <- 1 #No basis for assessment equals 1
+#Other letter grades equal NA
+for(i in 2:ncol(gpa_df))gpa_df[,i] <- as.numeric(gpa_df[,i])
+
+gpa_df$GPA <- rowSums(gpa_df[2:575], na.rm = T) / gpa_df$N_SUBJECTS # GPA of students
+
+#removing those with only NAs
+gpa_df <- gpa_df[(!is.nan(gpa_df$GPA)),]
+
+obs_missing_cor <- data.frame(matrix(ncol = 11, nrow = 1))
+colnames(obs_missing_cor) <- colnames(choicedf)[1:11]
+
+cor(choicedf[,1], gpa_df$GPA, use = "pairwise.complete.obs")
+
+for(i in 1:11)obs_missing_cor[,i] <- cor(choicedf[,i], gpa_df$GPA, use = "pairwise.complete.obs")
+obs_missing_cor <- round(obs_missing_cor, 2)
+#write.table(obs_missing_cor, "obs_missing_cor", quote = F, row.names = F, col.names = T, sep = "\t")
+
+#checking significance level
+for(i in 1:11){k <-cor.test(gpa_df$GPA, choicedf[,i], method = "pearson")
+print(k)
+}  

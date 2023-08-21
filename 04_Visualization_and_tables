@@ -1,0 +1,454 @@
+# 8. Model Tables ---------------------------------------------------------
+
+#### 8.1 Factor loadings ####
+
+uni_graded_sum <- summary(uni_graded_model)
+uni_graded_f <- as.data.frame(uni_graded_sum$rotF)
+uni_graded_f <- round(uni_graded_f, 2)
+#write.table(uni_graded_f, "uni_graded_f", row.names = T, quote = F, sep = "\t")
+
+two_dim_sum <- summary(two_dim_model)
+two_dim_f <- as.data.frame(two_dim_sum$rotF)
+two_dim_f <- round(two_dim_f, 2)
+#write.table(two_dim_f, "two_dim_f", row.names = T, quote = F,sep = "\t")
+
+three_dim_sum <- summary(three_dim_model)
+three_dim_f <- as.data.frame(three_dim_sum$rotF)
+three_dim_f <- round(three_dim_f, 2)
+#write.table(three_dim_f, "three_dim_f", row.names = T, quote = F,sep = "\t")
+
+final_dim_sum <- summary(final_three_dim_model)
+final_dim_f <- as.data.frame(final_dim_sum$rotF)
+final_dim_f <- round(final_dim_f,2)
+#write.table(final_dim_f, "final_dim_f", row.names = T, quote = F,sep = "\t")
+
+
+#### 8.2 Difficulty parameters ####
+
+#uni-dimensional (Model 1)
+uni_graded_coef <- coef(uni_graded_model, IRTpars = T, simplify = T)
+uni_graded_p <- as.data.frame(uni_graded_coef$items)
+uni_graded_p <- round(uni_graded_p,2)
+
+#two-dimensional (Model 2)
+two_dim_coef <- coef(two_dim_model, IRTpars = T, simplify = T)
+two_dim_p <- as.data.frame(two_dim_coef$items)
+two_dim_p <- round(two_dim_p, 2)
+
+#three-dimensional (Model 3)
+three_dim_coef <- coef(three_dim_model, IRTpars = T, simplify = T)
+three_dim_p <- as.data.frame(three_dim_coef$items)
+three_dim_p <- round(three_dim_p, 2)
+
+
+#joint model (Model 4)
+final_three_dim_coef <- coef(final_three_dim_model, simplify = T)
+final_three_dim_coef <- final_three_dim_coef$items
+final_three_dim_coef <- as.data.frame(final_three_dim_coef)
+
+
+
+
+# 9. Preparing Plots ----------------------------------------------------------------
+
+
+#### 9.1 Preparing difficulty datasets for Models 0-3 ####
+
+
+##### uni-dimensional model ####
+uni_graded_coef <- coef(uni_graded_model, IRTpars = T)
+uni_graded_coef <- as.data.frame(uni_graded_coef[1:17])
+uni_graded_coef <- uni_graded_coef[, !grepl("\\.a\\d+", colnames(uni_graded_coef))] # removing discrimination parameters
+uni_graded_coef <- as.data.frame(t(uni_graded_coef))
+uni_graded_coef$subject <- gsub("\\..*", "", row.names(uni_graded_coef))
+uni_graded_coef$index <- as.factor(rep(1:5,17)) #index needed for plotting
+uni_graded_coef$model <- as.factor(rep(1, 85))  # model index
+
+##### two-dimensional model ####
+two_dim_coef <- coef(two_dim_model, IRTpars = T)
+two_dim_coef <- as.data.frame(two_dim_coef[1:17])
+two_dim_coef <- two_dim_coef[, !grepl("\\.a\\d+", colnames(two_dim_coef))]
+two_dim_coef <- as.data.frame(t(two_dim_coef))
+two_dim_coef$subject <- gsub("\\..*", "", row.names(two_dim_coef))
+two_dim_coef$index <- as.factor(rep(6:10, 17))
+two_dim_coef$model <- as.factor(rep( 2, 85))
+
+##### three-dimensional model ####
+three_dim_coef <- coef(three_dim_model, IRTpars = T)
+three_dim_coef <- as.data.frame(three_dim_coef[1:17])
+three_dim_coef <- three_dim_coef[, !grepl("\\.a\\d+", colnames(three_dim_coef))]
+three_dim_coef <- as.data.frame(t(three_dim_coef))
+three_dim_coef$subject <- gsub("\\..*", "", row.names(three_dim_coef))
+three_dim_coef$index <- as.factor(rep(11:15,17))
+three_dim_coef$model <- as.factor(rep(3, 85))
+
+#### 9.2 Preparing difficulty datasets for Model 4 ####
+
+#Parameters to transform paramters into standard parameterization must be done manually
+final_three_dim_coef <- coef(final_three_dim_model)
+final_three_dim_coef <- as.data.frame(final_three_dim_coef)
+
+#removing discrimination parameters that are zero or NA
+final_three_dim_coef[final_three_dim_coef == 0] <- NA
+na_cols <- which(apply(is.na(final_three_dim_coef), 2, all))
+final_three_dim_coef <- final_three_dim_coef[, -na_cols]
+
+#Removing standard errors
+final_three_dim_coef <- final_three_dim_coef[1,]
+final_three_dim_coef <- t(final_three_dim_coef)
+
+#removing parameters of the GGUM model
+final_three_dim_coef <- final_three_dim_coef[34:135]
+
+##### 9.21 Transforming point estimates ####
+
+#vector containing the position of the discrimination parameters
+a_vec <- seq(from = 1, to = 102, by = 6)
+
+#applying the formula -d/a to each difficulty parameter
+for(i in a_vec){
+  for(k in 1:5){
+    parameter <- i + k
+    final_three_dim_coef[parameter] = -final_three_dim_coef[parameter]/final_three_dim_coef[i]
+  }
+}
+
+
+##### 9.22 Transforming Standard errors ####
+
+#list of parameters
+parvec <- (extract.mirt(final_three_dim_model, 'parvec'))
+
+#parameter covariance matrix
+vcov <- vcov(final_three_dim_model)
+
+partransformed <- data.frame(
+  a = NA,
+  b = NA)
+
+#Transforming standard errors using the delta method
+for (i in a_vec) {
+  for (k in 1:5) {
+    
+    parameter <- i + k
+    pick <- c(i, parameter)
+    ad <- final_three_dim_coef[pick]
+    v <- vcov[pick, pick]
+    SEs <- deltamethod(list(~ x1, ~ -x2/x1), ad, v)
+    partransformed <- rbind(partransformed,SEs)
+    
+  }
+}
+
+partransformed <- partransformed[-1,] # removing first NA row
+partransformed$subject <- rep(colnames(gradedf), each = 5) # taking subject names from gradedf
+
+#removing discrimination parameters from the list of transformed point estimates
+final_three_dim_coef <- final_three_dim_coef[-a_vec]
+
+
+#creating 95% CIs
+partransformed$CIa <- partransformed$a*1.96 
+partransformed$CIb <- partransformed$b*1.96
+partransformed$par <- final_three_dim_coef
+partransformed$CI_2.5 <- partransformed$par-partransformed$CIb
+partransformed$CI_97.5 <- partransformed$par+partransformed$CIb
+
+partransformed <- partransformed[c("par","CI_2.5","CI_97.5","subject")]
+
+partransformed$index <- as.factor(rep(16:20, 17))
+partransformed$model <- as.factor(rep(4, 85))
+
+
+
+# 10. Plotting ------------------------------------------------------------
+
+
+plot_names <- as.data.frame(subject_ordered)
+names(plot_names) <- "R_name"
+plot_names$plot_names <- c("History","Religion","Psychology","Law","Politics",
+                           "Marketing","Sociology","Norwegian, written",
+                           "Norwegian, oral","Norwegian, secondary",
+                           "English, written","English, oral","Biology",
+                           "Math, STEM","Math, sociological", "Chemistry","Physics")
+
+#### 10.1 difficulty parameters for Models 0-3 ####
+
+one_two_three_coef <- rbind(uni_graded_coef,two_dim_coef,three_dim_coef)
+one_two_three_coef$subject <- rep(plot_names$plot_names, each = 5, times = 3)
+one_two_three_coef$subject <- factor(one_two_three_coef$subject, levels = plot_names$plot_names)
+
+
+ggplot(one_two_three_coef, aes(x = subject, y = par, color = factor(model), group = index)) +
+  geom_errorbar(aes(ymin = CI_2.5, ymax = CI_97.5), width = 0.3) +
+  geom_point(size = 1.5)+
+  geom_line(linewidth = 0.7)+
+  labs(x = "Subject", y="θ")+
+  scale_color_manual(values = c( "#85dc5d","#4459f8", "#b04d9e"), name = "Model",
+                     labels = c("1","2", "3"))+
+  guides(color = guide_legend(override.aes = list(shape = 15))) +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11), # adjusting size of the x-axis
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    plot.title = element_text(hjust = 0.5, size = 13),  # centers the plot title and changes its font size
+    panel.background = element_rect(fill = NA), # setting a white background for the plots
+    panel.grid.major.y = element_line(colour = "grey80", size = 1/4), # Changing the size and color of the horizontal grid lines
+    panel.grid.major.x = element_blank(),
+    legend.key = element_blank(),
+    legend.key.size = unit(0.8, "cm"))
+
+
+#### 10.2 difficulty parameters of Models 2 and 4 ####
+
+two_joint_coef <- rbind(two_dim_coef, partransformed)
+two_joint_coef$subject <- rep(plot_names$plot_names, each = 5, times = 2)
+two_joint_coef$subject <- factor(two_joint_coef$subject, levels = plot_names$plot_names)
+
+ggplot(two_joint_coef, aes(x = subject, y = par, color = factor(model), group = index)) +
+  geom_errorbar(aes(ymin = CI_2.5, ymax = CI_97.5), width = 0.3) +
+  geom_point(size = 1.5) +
+  geom_line(size = 0.7)+
+  scale_x_discrete(labels=c(plot_names))+
+  labs(x = "Subject", y="θ",)+
+  scale_color_manual(values = c("#4459f8","#e02941"), name = "Model",
+                     labels = c("2","4"))+
+  guides(color = guide_legend(override.aes = list(shape = 15))) +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11), # adjusting size of the x-axis
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    plot.title = element_text(hjust = 0.5, size = 13),  # centers the plot title and changes its font size
+    panel.background = element_rect(fill = NA), # setting a white background for the plots
+    panel.grid.major.y = element_line(colour = "grey80", size = 1/4), # Changing the size and color of the horizontal grid lines
+    panel.grid.major.x = element_blank(),
+    legend.key = element_blank(),
+    legend.key.size = unit(0.8, "cm")) # removing the vertical grid lines
+
+
+
+#### 10.3 Expected subject means for Model 4 ####
+
+#DF with observed grades and Model 4 expected grades
+gg_grades4 <- as.data.frame(rbind(as.matrix(colMeans(final_df[12:28],na.rm = T)),
+                                  as.matrix(colMeans(ex_joint_free[12:28]))))
+
+gg_grades4$subject_name <- rep(plot_names[match(row.names(grades_o4)[1:17], plot_names$R_name), "plot_names"],2)
+
+gg_grades4$index <- as.factor(c(rep("observed grades",17),
+                                rep("expected grades",17)))
+names(gg_grades4)[1] <- "grade"
+gg_grades4$grade <- round(gg_grades4$grade, 2)
+
+gg_grades4$width <- ifelse(gg_grades4$index == "observed grades", 0.5, 1)
+
+# reverse the order of the factor levels
+gg_grades4$subject_name_ordered <- factor(gg_grades4$subject_name,
+                                          levels = unique(gg_grades4$subject_name))
+gg_grades4$subject_name_ordered <- fct_rev(gg_grades4$subject_name_ordered)
+
+
+#Plot
+ggplot(gg_grades4, aes(x = subject_name_ordered , y = grade, fill = index)) +
+  geom_col(position = position_dodge2(width = 0.2), width = gg_grades$width[1:34]) +
+  geom_text(data = subset(gg_grades4, index == "expected grades"), aes(label = grade), 
+            position = position_dodge2(width = 0.2), vjust = 0.8,hjust = -0.15, size = 2.5) + # add labels to the relevant bars
+  coord_flip(ylim = c(0,5)) +
+  scale_fill_manual(values = c("#e02941","#ffc78a" ), name = "Grade Type") + 
+  labs(x = "Subject", y = "Mean grade") +
+  guides(fill = guide_legend(reverse = T)) +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11), # adjusting size of the x-axis
+    axis.text.x = element_text( size = 9),
+    axis.text.y = element_text( size = 9),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    legend.key.size = unit(0.8, "lines"), # increases the size of the legend icons
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) # setting a white background for the legend
+
+#### 10.4 Expected subject means for Model 2 ####
+
+
+#DF with observed grades and Model 2 expected grades
+gg_grades2 <- as.data.frame(rbind(as.matrix(colMeans(final_df[12:28],na.rm = T)),
+                                  as.matrix(colMeans(ex_grades_two_dim))))
+
+gg_grades2$subject_name <- rep(plot_names[match(row.names(grades_o4)[1:17], plot_names$R_name), "plot_names"],2)
+
+gg_grades2$index <- as.factor(c(rep("observed grades",17),
+                                rep("expected grades",17)))
+names(gg_grades2)[1] <- "grade"
+gg_grades2$grade <- round(gg_grades2$grade, 2)
+
+gg_grades2$width <- ifelse(gg_grades2$index == "observed grades", 0.5, 1)
+
+# reverse the order of the factor levels
+gg_grades2$subject_name_ordered <- factor(gg_grades2$subject_name,
+                                          levels = unique(gg_grades2$subject_name))
+gg_grades2$subject_name_ordered <- fct_rev(gg_grades2$subject_name_ordered)
+
+
+
+#Plot
+ggplot(gg_grades2, aes(x = subject_name_ordered , y = grade, fill = index)) +
+  geom_col(position = position_dodge2(width = 0.2), width = gg_grades$width[1:34]) +
+  geom_text(data = subset(gg_grades4, index == "expected grades"), aes(label = grade), 
+            position = position_dodge2(width = 0.2), vjust = 0.8,hjust = -0.15, size = 2.5) + # add labels to the relevant bars
+  coord_flip(ylim = c(0,5)) +
+  scale_fill_manual(values = c("#e02941","#ffc78a" ), name = "Grade Type") + 
+  labs(x = "Subject", y = "Mean grade") +
+  guides(fill = guide_legend(reverse = T)) +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11), # adjusting size of the x-axis
+    axis.text.x = element_text( size = 9),
+    axis.text.y = element_text( size = 9),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    legend.key.size = unit(0.8, "lines"), # increases the size of the legend icons
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) # setting a white background for the legend
+
+
+
+
+#### 10.5 Expected Items ####
+
+
+# Expected item for Model 2
+theta_two <- cbind((seq(-3,3, length.out = 200)),
+                   seq(-3,3, length.out = 200))
+
+biology_2 <- extract.item(two_dim_model, 13)
+math_n_2 <- extract.item(two_dim_model, 14)
+math_s_2 <- extract.item(two_dim_model, 15)
+chemistry_2 <- extract.item(two_dim_model, 16)
+physics_2 <- extract.item(two_dim_model, 17)
+
+
+# Expected item for Model 4
+
+
+biology_4 <- extract.item(final_three_dim_model, 24)
+math_n_4 <- extract.item(final_three_dim_model, 25)
+math_s_4 <- extract.item(final_three_dim_model, 26)
+chemistry_4 <- extract.item(final_three_dim_model, 27)
+physics_4 <- extract.item(final_three_dim_model, 28)
+
+theta_three <- cbind((seq(-3,3, length.out = 200)),
+                     seq(-3,3, length.out = 200),
+                     seq(-3,3, length.out = 200))
+
+
+
+expected_items <- data.frame(matrix(NA, nrow=2000, ncol=10))
+
+expected_items <- data.frame(biology2 = expected.item(biology_2,theta_two, min = 1),
+                             math_n2 = expected.item(math_n_2,theta_two, min = 1),
+                             math_s2 = expected.item(math_s_2,theta_two, min = 1),
+                             chemistry2 = expected.item(chemistry_2,theta_two, min = 1),
+                             physics2 = expected.item(physics_2,theta_two, min = 1),
+                             biology4 = expected.item(biology_4,theta_three, min = 1),
+                             math_n4 = expected.item(math_n_4,theta_three, min = 1),
+                             math_s4 = expected.item(math_s_4,theta_three, min = 1),
+                             chemistry4 = expected.item(chemistry_4,theta_three, min = 1),
+                             physics4 = expected.item(physics_4,theta_three, min = 1),
+                             theta = seq(-3,3, length.out = 200))
+
+
+
+names(expected_items) <- c("biology2","Math_n2","math_s2","chemistry2","physics2"
+                           ,"biology4","Math_n4","math_s4","chemistry4","physics4")
+save(expected_items, file = "expected_items.Rdata")
+
+biology <- ggplot(data = expected_items, aes(x = theta ))+
+  scale_y_continuous(limits = c(1, 6), breaks = seq(1, 6, 1))+
+  geom_line(aes(y = biology2), color = "#4459f8", size = 1)+
+  geom_line(aes(y = biology4), color = "#e02941", size = 1)+
+  labs(x = "θ", y="Expected Grade")+
+  ggtitle("Biology")+
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11),
+    axis.text.x = element_text( size = 10),
+    axis.text.y = element_text( size = 10),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(color = "grey", fill = NA, size = 1),
+    legend.key.size = unit(0.8, "lines"), 
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) 
+
+Math_n <- ggplot(data = expected_items, aes(x = theta ))+
+  scale_y_continuous(limits = c(1, 6), breaks = seq(1, 6, 1))+
+  geom_line(aes(y = math_n2), color = "#4459f8", size = 1)+
+  geom_line(aes(y = math_n4), color = "#e02941", size = 1)+
+  labs(x = "θ", y="Expected Grade")+
+  ggtitle("Math, STEM")+
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11),
+    axis.text.x = element_text( size = 10),
+    axis.text.y = element_text( size = 10),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(color = "grey", fill = NA, size = 1),
+    legend.key.size = unit(0.8, "lines"), 
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) 
+
+Math_s <-ggplot(data = expected_items, aes(x = theta ))+
+  scale_y_continuous(limits = c(1, 6), breaks = seq(1, 6, 1))+
+  geom_line(aes(y = math_s2), color = "#4459f8", size = 1)+
+  geom_line(aes(y = math_s4), color = "#e02941", size = 1)+
+  labs(x = "θ", y="Expected Grade")+
+  ggtitle("Math, sociological")+
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11),
+    axis.text.x = element_text( size = 10),
+    axis.text.y = element_text( size = 10),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(color = "grey", fill = NA, size = 1),
+    legend.key.size = unit(0.8, "lines"), 
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) 
+
+chemistry <- ggplot(data = expected_items, aes(x = theta ))+
+  scale_y_continuous(limits = c(1, 6), breaks = seq(1, 6, 1))+
+  geom_line(aes(y = chemistry2), color = "#4459f8", size = 1)+
+  geom_line(aes(y = chemistry4), color = "#e02941", size = 1)+
+  labs(x = "θ", y="Expected Grade")+
+  ggtitle("Chemistry")+
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11),
+    axis.text.x = element_text( size = 10),
+    axis.text.y = element_text( size = 10),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(color = "grey", fill = NA, size = 1),
+    legend.key.size = unit(0.8, "lines"), 
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) 
+
+physics <- ggplot(data = expected_items, aes(x = theta ))+
+  scale_y_continuous(limits = c(1, 6), breaks = seq(1, 6, 1))+
+  geom_line(aes(y = physics2), color = "#4459f8", size = 1)+
+  geom_line(aes(y = physics4), color = "#e02941", size = 1)+
+  labs(x = "θ", y="Expected Grade")+
+  ggtitle("Physics")+
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title.x = element_text(size = 11),
+    axis.text.x = element_text( size = 10),
+    axis.text.y = element_text( size = 10),
+    plot.title = element_text(hjust = 0.5, size = 13),
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(color = "grey", fill = NA, size = 1),
+    legend.key.size = unit(0.8, "lines"), 
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)) 
